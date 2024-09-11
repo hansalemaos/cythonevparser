@@ -7,89 +7,88 @@
 ### Cython and a C compiler must be installed!
 
 ```PY
-Coordinates the parsing of UI Automator events by initiating a thread to gather data and then processing that data using regex matching based on user-specified criteria. This function aims to facilitate real-time event handling for UI analysis.
-
-Parameters:
-    myregex_keys (str): Regex pattern to match keys.
-    myregex_values (str): Regex pattern to match values.
-    filter_function (callable, optional): A function to apply as a filter for matched regex patterns. Should return 1 to stop parsing.
-    regex_flags_keys (int): Regex flags for key matching.
-    regex_flags_values (int): Regex flags for value matching.
-    sleep_between_each_scan (float): Time to wait between each scan loop.
-    print_results (bool): Flag to determine whether to print the results.
-    regex_nogil (bool): Flag to enable or disable GIL during regex operations.
-    device_serial (str), adb_exe (str), device_shell (str), uiautomator_cmd (bytes): Parameters for the thread and subprocess.
-    sleep_after_starting_thread (float): Time to wait after starting the thread before processing.
-    thread_daemon (bool): Whether the thread should run as a daemon.
-    uiautomator_kill_cmd (bytes): Command to kill the uiautomator process.
-    observe_results (bool): Whether to observe and react to the results in real-time.
-
-Notes:
-    This function leverages threading and subprocess management to maintain continuous monitoring and processing of UI events.
-
+import time
 import regex as re
 import cythonevparser
-import shutil
-cythonevparser.evparse.config_settings.debug_enabled = False
+from cythondfprint import add_printer
+import pandas as pd
 
-def filter_keys_function(
-    key=b"",
-    value=b"",
-    myregex_keys=b"",
-    myregex_values=b"",
-    regex_flags_keys=0,
-    regex_flags_values=0,
-):
-    # print('observing')
-    try:
-        if b"Metallica" in value:
-            return 1
+add_printer(1)
 
-        if re.search(myregex_keys, key, flags=regex_flags_keys) and re.search(
-            myregex_values, value, flags=regex_flags_values
-        ):
-            print(key, value)
-            return 1 # stops the loop
-        return 0
-    except Exception:
-        return 0
-
-
-device_serial = "127.0.0.1:5560"
-adb_exe = shutil.which("adb")
-device_shell = "shell"
-uiautomator_cmd = b"uiautomator events"
-regex_nogil = True
-sleep_after_starting_thread = 5
-thread_daemon = True
-print_results = True
-sleep_between_each_scan = 0.001
-regex_flags_keys = re.IGNORECASE
-regex_flags_values = re.IGNORECASE
-filter_function = filter_keys_function
-myregex_keys = b"Text|Content"
-myregex_values = rb"Metallica"
-uiautomator_kill_cmd = b"pkill uiautomator"
-observe_results = True
-
-
-cythonevparser.evparse.start_parsing(
-    myregex_keys=myregex_keys,
-    myregex_values=myregex_values,
-    filter_function=filter_function,
-    regex_flags_keys=regex_flags_keys,
-    regex_flags_values=regex_flags_values,
-    sleep_between_each_scan=sleep_between_each_scan,
-    print_results=print_results,
-    regex_nogil=regex_nogil,
+cythonevparser.evparse.clean_cache()
+adb_exe = ""
+device_serial = ""
+cythonevparser.evparse.create_temp_memdisk(
+    memdisk_path="/media/ramdisk",
+    adb_path=adb_exe,
     device_serial=device_serial,
-    adb_exe=adb_exe,
-    device_shell=device_shell,
-    uiautomator_cmd=uiautomator_cmd,
-    sleep_after_starting_thread=sleep_after_starting_thread,
-    thread_daemon=thread_daemon,
-    uiautomator_kill_cmd=uiautomator_kill_cmd,
-    observe_results=observe_results,
+    memdisk_size="128M",
+    shell=False,
+    su_exe="su",
 )
+evp = cythonevparser.evparse.EvParse(
+    adb_exe=adb_exe,
+    device_serial=device_serial,
+    field_size=50,
+    record_count=25,
+    sleep_between_each_scan=0.01,
+    regex_nogil=True,
+    device_shell="sh",
+    uiautomator_cmd=b"uiautomator events",
+    sleep_after_starting_thread=3,
+    thread_daemon=True,
+    uiautomator_kill_cmd=b"pkill uiautomator",
+    timeout_scan=0.1,
+    screen_width=720,
+    screen_height=1280,
+    subproc_shell=True,
+    with_children=False,
+    add_screenshot=False,
+    screenshot_kwargs=None,
+    input_tap_center_x="aa_center_x",
+    input_tap_center_y="aa_center_y",
+    input_tap_input_cmd="input touchscreen tap",
+    input_tap_kwargs=None,
+    sendevent_mouse_move_start_x="aa_start_x",
+    sendevent_mouse_move_start_y="aa_start_y",
+    sendevent_mouse_move_end_x="aa_end_x",
+    sendevent_mouse_move_end_y="aa_end_y",
+    sendevent_mouse_move_y_max=65535,
+    sendevent_mouse_move_x_max=65535,
+    sendevent_mouse_move_inputdev="/dev/input/event5",
+    sendevent_mouse_move_add=True,
+    sendevent_mouse_move_kwargs=None,
+    sendevent_mouse_move_su_exe="su",
+    sendevent_mouse_move_sh_device="sh",
+    sendevent_mouse_move_cwd_on_device="/media/ramdisk",
+    sendevent_mouse_move_qty_blocks=16 * 24,
+)
+callback_function_kwargs = {}
+callback_function_kwargs["regex_to_check"] = rb"Metallica"
+callback_function_kwargs["regex_flags"] = re.IGNORECASE
+evp.kill_ui_automator(["sh"])
+time.sleep(5)
+while True:
+    df = evp.parse_elements_dataframe()
+    for mousecmd in df.loc[
+        df.aa_classname.str.contains("textview")
+        & df.aa_element_id.str.contains("title")
+    ].aa_mouse_move:
+        print(mousecmd)
+        evp.data_array[:] = b""
+        evp.starttime.clear()
+        mousecmd()
+        evp.starttime.append(time.time())
+        result = evp.start_event_parser(
+            callback_function=evp.callback_function,
+            max_timeout=0.1,
+            callback_function_kwargs=callback_function_kwargs,
+            sleep_between_each_scan=0.005,
+            print_elements=True,
+        )
+        if evp.last_results:
+            dfparsed = pd.DataFrame(evp.last_results, dtype="object")
+            print(dfparsed["Text"])
+            evp.last_results.clear()
 
 ```

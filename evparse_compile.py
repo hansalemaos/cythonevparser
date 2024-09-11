@@ -1,4 +1,4 @@
-# import numpy as np
+import numpy as np
 from Cython.Compiler import Options
 from setuptools import Extension, setup
 from Cython.Build import cythonize
@@ -6,7 +6,7 @@ import sys
 import platform
 
 iswindows = "win" in platform.platform().lower()
-# numpyincludefolder = np.get_include()
+numpyincludefolder = np.get_include()
 name = "evparse"
 
 Options.docstrings = False
@@ -32,28 +32,12 @@ Options.closure_freelist_size = 8
 configdict = {
     "py_limited_api": False,
     "name": name,
-    "sources": [
-        name + ".pyx",
-    ],
+    "sources": [name + ".pyx"],
     "include_dirs": [
-        # numpyincludefolder,
+        numpyincludefolder,
     ],
     "define_macros": [
-        ("NPY_NO_DEPRECATED_API", 1),
-        ("NPY_1_7_API_VERSION", 0),
-        ("CYTHON_USE_DICT_VERSIONS", 0),
-        ("CYTHON_FAST_GIL", 1),
-        ("CYTHON_USE_PYLIST_INTERNALS", 1),
-        ("CYTHON_USE_UNICODE_INTERNALS", 1),
-        ("CYTHON_ASSUME_SAFE_MACROS", 1),
-        ("CYTHON_USE_TYPE_SLOTS", 1),
-        ("CYTHON_USE_PYTYPE_LOOKUP", 1),
-        ("CYTHON_USE_ASYNC_SLOTS", 1),
-        ("CYTHON_USE_PYLONG_INTERNALS", 1),
-        ("CYTHON_USE_UNICODE_WRITER", 1),
-        ("CYTHON_UNPACK_METHODS", 1),
-        ("CYTHON_USE_EXC_INFO_STACK", 1),
-        ("CYTHON_ATOMICS", 1),
+
     ],
     "undef_macros": [],
     "library_dirs": [],
@@ -61,11 +45,11 @@ configdict = {
     "runtime_library_dirs": [],
     "extra_objects": [],
     "extra_compile_args": (
-        ["/std:c++20", "/fp:fast", "/EHsc", "/openmp"]
+        ["/std:c++20", "/fp:fast", "/EHsc", ]
         if iswindows
-        else ["-std:c++20", "-fp:fast", "-EHsc", "-openmp"]
+        else ['-std=c++20']
     ),
-    "extra_link_args": [],
+    "extra_link_args":  [],
     "export_symbols": [],
     "swig_opts": [],
     "depends": [],
@@ -73,17 +57,17 @@ configdict = {
     "optional": None,
 }
 compiler_directives = {
-    "binding": True,
+    "binding": False,
     "boundscheck": False,
     "wraparound": False,
     "initializedcheck": False,
     "nonecheck": False,
     "overflowcheck": False,
-    "overflowcheck.fold": True,
+    "overflowcheck.fold": False,
     "embedsignature": True,
     "embedsignature.format": "c",  # (c / python / clinic)
     "cdivision": True,
-    "cdivision_warnings": False,
+    "cdivision_warnings": True,
     "cpow": True,
     "always_allow_keywords": False,
     "c_api_binop_methods": False,

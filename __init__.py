@@ -4,7 +4,7 @@ try:
     import evparse
 
 except Exception as e:
-    import Cython, setuptools, platform, subprocess, os, sys, time, regex, exceptdrucker
+    import Cython, setuptools, platform, subprocess, os, sys, time, regex, exceptdrucker,numpy,adbshellexecuter,cythoncubicspline,flatten_any_dict_iterable_or_whatsoever,nested2nested,parifinder,pandas
 
     iswindows = "win" in platform.platform().lower()
     if iswindows:
@@ -29,7 +29,7 @@ except Exception as e:
         else None,
     )
     if not iswindows:
-        time.sleep(30)
+        time.sleep(300)
     import evparse
 
     os.chdir(olddict)

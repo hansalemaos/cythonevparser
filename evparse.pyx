@@ -1,11 +1,13 @@
 cimport cython
 cimport numpy as np
-from adbshellexecuter import UniversalADBExecutor,iswindows
+from adbshellexecuter import UniversalADBExecutor, iswindows
 from cython.operator cimport dereference as deref, preincrement as inc
 from cythoncubicspline import bresenham_line
+from cythondfprint import add_printer
 from exceptdrucker import errwrite
 from flatten_any_dict_iterable_or_whatsoever import fla_tu
 from itertools import takewhile
+from libc.stdio cimport printf
 from libcpp.queue cimport queue
 from libcpp.string cimport string
 from libcpp.unordered_map cimport unordered_map
@@ -16,6 +18,7 @@ import base64
 import ctypes
 import cython
 import hashlib
+import io
 import numpy as np
 import os
 import pandas as pd
@@ -25,8 +28,10 @@ import subprocess
 import sys
 import threading
 import time
-from libc.stdio cimport printf
+import zipfile
 
+
+add_printer(1)
 configstuff=sys.modules[__name__]
 cdef:
     dict tmp_cache_regexnumber={}
@@ -74,6 +79,368 @@ if iswindows:
         "start_new_session": True,
     }
 re.cache_all(True)
+
+
+
+remove_non_word_chars = re.compile(rb"[\W_]")
+
+cdef:
+    int SIG_BOOLEAN = ord("Z")
+    int SIG_BYTE = ord("B")
+    int SIG_SHORT = ord("S")
+    int SIG_INT = ord("I")
+    int SIG_LONG = ord("J")
+    int SIG_FLOAT = ord("F")
+    int SIG_DOUBLE = ord("D")
+    int SIG_STRING = ord("R")
+    int SIG_MAP = ord("M")
+    int SIG_END_MAP = 0
+    str PYTHON_STRUCT_UNPACK_SIG_BOOLEAN = "?"
+    str PYTHON_STRUCT_UNPACK_SIG_BYTE = "b"
+    str PYTHON_STRUCT_UNPACK_SIG_SHORT = "h"
+    str PYTHON_STRUCT_UNPACK_SIG_INT = "i"
+    str PYTHON_STRUCT_UNPACK_SIG_LONG = "q"
+    str PYTHON_STRUCT_UNPACK_SIG_FLOAT = "f"
+    str PYTHON_STRUCT_UNPACK_SIG_DOUBLE = "d"
+    str PYTHON_STRUCT_UNPACK_SIG_STRING = "s"
+    str LITTLE_OR_BIG = ">"
+    object STRUCT_UNPACK_SIG_BOOLEAN = struct.Struct(
+    f"{LITTLE_OR_BIG}{PYTHON_STRUCT_UNPACK_SIG_BOOLEAN }"
+    ).unpack
+    object STRUCT_UNPACK_SIG_BYTE = struct.Struct(
+        f"{LITTLE_OR_BIG}{PYTHON_STRUCT_UNPACK_SIG_BYTE }"
+    ).unpack
+    object STRUCT_UNPACK_SIG_SHORT = struct.Struct(
+        f"{LITTLE_OR_BIG}{PYTHON_STRUCT_UNPACK_SIG_SHORT }"
+    ).unpack
+    object STRUCT_UNPACK_SIG_INT = struct.Struct(
+        f"{LITTLE_OR_BIG}{PYTHON_STRUCT_UNPACK_SIG_INT }"
+    ).unpack
+    object STRUCT_UNPACK_SIG_LONG = struct.Struct(
+        f"{LITTLE_OR_BIG}{PYTHON_STRUCT_UNPACK_SIG_LONG }"
+    ).unpack
+    object STRUCT_UNPACK_SIG_FLOAT = struct.Struct(
+        f"{LITTLE_OR_BIG}{PYTHON_STRUCT_UNPACK_SIG_FLOAT }"
+    ).unpack
+    object STRUCT_UNPACK_SIG_DOUBLE = struct.Struct(
+        f"{LITTLE_OR_BIG}{PYTHON_STRUCT_UNPACK_SIG_DOUBLE }"
+    ).unpack
+
+meta_name_column="bb_meta___hash__"
+
+
+cpdef int parsedata(bytes sbytes, list resultlist):
+    cdef:
+        object restofstringasbytes = io.BytesIO(sbytes)
+        bytes nextbyte, bytes2convert
+        object convertedbytes
+        int ordnextbyte
+
+    while nextbyte := restofstringasbytes.read(1):
+        try:
+            convertedbytes = b""
+            ordnextbyte = ord(nextbyte)
+            if ordnextbyte == SIG_STRING:
+                bytes2convert2 = restofstringasbytes.read(2)
+                bytes2convert = restofstringasbytes.read(
+                    bytes2convert2[len(bytes2convert2) - 1]
+                )
+                convertedbytes = bytes2convert.decode("utf-8", errors="ignore")
+                resultlist.append(convertedbytes)
+            elif ordnextbyte == SIG_SHORT:
+                bytes2convert = restofstringasbytes.read(2)
+                convertedbytes = STRUCT_UNPACK_SIG_SHORT(bytes2convert)[0]
+                resultlist.append(convertedbytes)
+            elif ordnextbyte == SIG_BOOLEAN:
+                bytes2convert = restofstringasbytes.read(1)
+                convertedbytes = STRUCT_UNPACK_SIG_BOOLEAN(bytes2convert)[0]
+                resultlist.append(convertedbytes)
+            elif ordnextbyte == SIG_BYTE:
+                bytes2convert = restofstringasbytes.read(1)
+                convertedbytes = STRUCT_UNPACK_SIG_BYTE(bytes2convert)[0]
+                resultlist.append(convertedbytes)
+            elif ordnextbyte == SIG_INT:
+                bytes2convert = restofstringasbytes.read(4)
+                convertedbytes = STRUCT_UNPACK_SIG_INT(bytes2convert)[0]
+                resultlist.append(convertedbytes)
+            elif ordnextbyte == SIG_FLOAT:
+                bytes2convert = restofstringasbytes.read(4)
+                convertedbytes = STRUCT_UNPACK_SIG_FLOAT(bytes2convert)[0]
+                resultlist.append(convertedbytes)
+            elif ordnextbyte == SIG_DOUBLE:
+                bytes2convert = restofstringasbytes.read(8)
+                convertedbytes = STRUCT_UNPACK_SIG_DOUBLE(bytes2convert)[0]
+                resultlist.append(convertedbytes)
+            elif ordnextbyte == SIG_LONG:
+                bytes2convert = restofstringasbytes.read(8)
+                convertedbytes = STRUCT_UNPACK_SIG_LONG(bytes2convert)[0]
+                resultlist.append(convertedbytes)
+        except Exception:
+            if config_settings.debug_enabled:
+                errwrite()
+    return 0
+
+
+cpdef list[tuple] extract_files_from_zip(object zipfilepath):
+    cdef:
+        bytes data=b""
+        object ioby
+        list[tuple] single_files_extracted
+        Py_ssize_t len_single_files, single_file_index
+    if isinstance(zipfilepath, str) and os.path.exists(zipfilepath):
+        with open(zipfilepath, "rb") as f:
+            data = f.read()
+    else:
+        data = zipfilepath
+    ioby = io.BytesIO(data)
+    single_files_extracted = []
+    with zipfile.ZipFile(ioby, "r") as zip_ref:
+        single_files = zip_ref.namelist()
+        len_single_files = len(single_files)
+        for single_file_index in range(len_single_files):
+            try:
+                single_files_extracted.append(
+                    (
+                        single_files[single_file_index],
+                        zip_ref.read(single_files[single_file_index]),
+                    )
+                )
+            except Exception:
+                if config_settings.debug_enabled:
+                    errwrite()
+    return single_files_extracted
+
+
+def _convert_to_int(str x):
+    try:
+        return int(x, 16)
+    except Exception:
+        return pd.NA
+
+
+def parse_screen_elements(
+    bytes data,
+):
+    cdef:
+        bint firstnonzero
+        object joined_regex_re, dummyvalue, finalvalue, df
+        bytes window_data, property_data, key_spli
+        list property_data_split, windows_conjunction, for_regex, val_spli_list, splidata, tmpval_spli_list, alldfs
+        Py_ssize_t property_data_split_len, counter, pindex, windows_conjunction_len, co_index, len_mapped_properties, pro_index
+        Py_ssize_t group_counter, member_counter, len_splitdata, spl_data0_index, len_splitdata_spl_data0_index, spl_data1_index
+        Py_ssize_t key_spli_val_spli_index, val_spli_list_len, tmval_index,  indi
+        list[list] mapped_properties,splitdata
+        str meta_name_column = "bb_meta___name__"
+
+        dict properymap, all_elements_sorted, i0, i1
+        list[np.ndarray] realitemindexlist
+        dict string_columns_none
+    window_data, property_data = data.split(b"R\x00\rpropertyIndex", maxsplit=1)
+    property_data_split = property_data.split(b"R\x00")
+    counter = 0
+    mapped_properties = [[]]
+    property_data_split_len = len(property_data_split)
+    for pindex in range(property_data_split_len):
+        if counter == 0:
+            mapped_properties[len(mapped_properties) - 1].extend(
+                [
+                    property_data_split[pindex],
+                    STRUCT_UNPACK_SIG_SHORT(property_data_split[pindex][1:]),
+                ]
+            )
+            counter = counter + 1
+            continue
+        counter = counter + 1
+
+        mapped_properties[len(mapped_properties) - 1].append(
+            property_data_split[pindex][1 : property_data_split[pindex][0] + 1]
+        )
+        if property_data_split_len == counter:
+            break
+        mapped_properties.append(
+            [
+                property_data_split[pindex][property_data_split[pindex][0] + 1 :],
+                STRUCT_UNPACK_SIG_SHORT(property_data_split[pindex][property_data_split[pindex][0] + 2 :]),
+            ]
+        )
+
+    windows_conjunction = window_data.replace(
+        b"R\x00\x03ENDS", b"R\x00\x03R\x00\x03ENDSS"
+    ).split(b"R\x00\x03ENDS")
+    splitdata = []
+    windows_conjunction_len = len(windows_conjunction)
+    for co_index in range(windows_conjunction_len):
+        firstpass = (
+            windows_conjunction[co_index]
+            .replace(b"MS\x00\x03R", b"MS\x00\x03RS\x00\x03R")
+            .split(b"MS\x00\x03R")
+        )
+        splitdata.append(firstpass)
+    for_regex = []
+    properymap = {}
+    len_mapped_properties = len(mapped_properties)
+    for pro_index in range(len_mapped_properties):
+        properymap[mapped_properties[pro_index][0]] = mapped_properties[pro_index][2]
+        for_regex.append(b"(?:" + re.escape(mapped_properties[pro_index][0]) + b")")
+    string_columns_none={
+        v: None for v in (properymap.values())
+    }
+    joined_regex_re = re.compile(b"(" + b"|".join(for_regex) + b")")
+    group_counter = 0
+    member_counter = 0
+    all_elements_sorted = {}
+    val_spli_list = []
+    len_splitdata = len(splitdata)
+    for spl_data0_index in range(len_splitdata):
+        if group_counter not in all_elements_sorted:
+            all_elements_sorted[group_counter] = {}
+        member_counter = 0
+        len_splitdata_spl_data0_index = len(splitdata[spl_data0_index])
+        for spl_data1_index in range(len_splitdata_spl_data0_index):
+            if member_counter not in all_elements_sorted[group_counter]:
+                all_elements_sorted[group_counter][member_counter] = {}
+                for dummyvalue in properymap.values():
+                    all_elements_sorted[group_counter][member_counter][dummyvalue] = (
+                        None
+                    )
+            splidata = joined_regex_re.split(
+                splitdata[spl_data0_index][spl_data1_index]
+            )
+            if not splidata[0]:
+                del splidata[0]
+            if not splidata[len(splidata) - 1]:
+                del splidata[len(splidata) - 1]
+            for key_spli_val_spli_index in range(0, len(splidata) - 1, 2):
+                key_spli = splidata[key_spli_val_spli_index]
+                val_spli_list.clear()
+                parsedata(
+                    sbytes=splidata[key_spli_val_spli_index + 1],
+                    resultlist=val_spli_list,
+                )
+                finalvalue = None
+                if len(val_spli_list) == 1:
+                    finalvalue = val_spli_list[0]
+                elif len(val_spli_list) > 1:
+                    finalvalue = val_spli_list
+                    tmpval_spli_list = []
+                    firstnonzero = False
+                    val_spli_list_len = len(val_spli_list)
+                    for tmval_index in range(val_spli_list_len - 1, -1, -1):
+                        if val_spli_list[tmval_index] == 0 and not firstnonzero:
+                            continue
+                        tmpval_spli_list.append(val_spli_list[tmval_index])
+                        firstnonzero = True
+                    if not tmpval_spli_list:
+                        finalvalue = 0
+                    elif len(tmpval_spli_list) == 1:
+                        finalvalue = tmpval_spli_list[0]
+                    else:
+                        finalvalue = tuple(reversed(tmpval_spli_list))
+                all_elements_sorted[group_counter][member_counter][
+                    properymap[key_spli]
+                ] = finalvalue
+            member_counter += 1
+        group_counter += 1
+
+    alldfs = []
+    for k0, i0 in all_elements_sorted.items():
+        for k1, i1 in i0.items():
+            try:
+                alldfs.append({**string_columns_none,**i1,**{'aa_group':k0,'aa_member':k1}})
+            except Exception:
+                if config_settings.debug_enabled:
+                    errwrite()
+    df = pd.DataFrame(alldfs, dtype='object')
+    df.columns = [
+        (b"bb_"+remove_non_word_chars.sub(b'_', i).lower()).decode()
+        if i not in ["aa_group", "aa_member"]
+        else i
+        for i in df.columns
+    ]
+    decview = df.loc[
+         df[meta_name_column].str.contains(r"DecorView\s*$", na=False, regex=True)
+    ].index
+    if not len(decview)>0:
+        df.drop(range(decview[0]), axis=0, inplace=True)
+    df.dropna(axis=1, how="all", inplace=True)
+    df=df.dropna(axis=0, how="all", inplace=False)
+    df.loc[:, "aa_category"] = (
+        df[meta_name_column]
+        .str.rsplit("$", n=1)
+        .apply(
+            lambda h: pd.NA
+            if not hasattr(h, "__len__")
+            else h[1]
+            if len(h) == 2
+            else "RealItem"
+        )
+    )
+    realitemindexlist = np.array_split(
+        df.index.__array__(),
+        (df.loc[df.aa_category == "RealItem"].index.__array__() + 1),
+    )
+    for indi in range(len(realitemindexlist)):
+        df.loc[realitemindexlist[indi], "aa_subelements"] = indi
+    return df
+
+
+def parse_window_elements(dfx,adbexe='',device_serial='', str dump_cmd="cmd window dump-visible-window-views"):
+    adbsh = UniversalADBExecutor(
+            adb_path=adbexe,
+            device_serial=device_serial,
+        )
+    stdout, stderr, returncode = (
+        adbsh.shell_with_capturing_import_stdout_and_stderr(
+            command=dump_cmd,
+            debug=False,
+            ignore_exceptions=True,
+        )
+    )
+    if iswindows:
+        zipfilepath = stdout.replace(b"\r\n", b"\n")
+    else:
+        zipfilepath = stdout
+    zipname_zipdata = extract_files_from_zip(zipfilepath)
+    len_zipname_zipdata = len(zipname_zipdata)
+    for zip_index in range(len_zipname_zipdata):
+        try:
+            df = parse_screen_elements(
+                            zipname_zipdata[zip_index][1]
+                        )
+            df8=concat_frames(df,dfx,meta_name_column = "bb_meta___hash__")
+            if not df8.empty:
+                return df8
+        except Exception:
+            if config_settings.debug_enabled:
+                errwrite()
+    return pd.DataFrame()
+
+
+
+def concat_frames(df,dfx,str meta_name_column = "bb_meta___hash__"):
+    meta_name_column = "bb_meta___hash__"
+    df2 = dfx.merge(df, on=meta_name_column)
+    df7 = (
+        pd.concat([df2, df.loc[~df[meta_name_column].isin(dfx[meta_name_column])]])
+        .sort_values(by=["aa_group", "aa_member", "aa_subelements"])
+        .assign(
+            aa_subelements1=lambda xx: xx.aa_subelements,
+            aa_subelements2=lambda xx: xx.aa_subelements,
+        )
+        .groupby(["aa_subelements1"])
+        .ffill()
+        .groupby(["aa_subelements2"])
+        .bfill()
+    )
+    return (
+        df7.loc[~df7["aa_start_x"].isna()]
+        .dropna(
+            axis=1,
+            how="all",
+        )
+        .reset_index(drop=True)
+    )
+
 cdef:
     object refi = re.compile(r"([^,]+),([^,]+)-([^,]+),([^,]+)", flags=re.I)
     object hierachyregex = re.compile(rb"^\s*(?:(?:View Hierarchy:)|(?:Looper))")
@@ -928,6 +1295,25 @@ cpdef tuple[dict[cython.ulonglong,set],dict[cython.ulonglong,set[tuple]]] parse_
             all_my_children_together[parent].update((childrendictx.values()))
     return all_my_children_together,all_my_children
 
+
+class MoveAndTap:
+    __slots__=(
+        'movecmd','tapcmd',
+    )
+    def __init__(self,movecmd,tapcmd,):
+        self.movecmd=movecmd
+        self.tapcmd=tapcmd
+    def __call__(self, sleep_time=0 ) -> Any:
+        self.movecmd()
+        if sleep_time>0:
+            time.sleep(sleep_time)
+        self.tapcmd()
+    def __str__(self):
+        return f'{self.movecmd} | {self.tapcmd}'
+    def __repr__(self):
+        return self.__str__()
+
+
 def parse_fragments_active_screen(
     object serial="",
     object adb_path="",
@@ -956,22 +1342,15 @@ def parse_fragments_active_screen(
     str sendevent_mouse_move_sh_device='sh',
     str sendevent_mouse_move_cwd_on_device='/sdcard',
     Py_ssize_t sendevent_mouse_move_qty_blocks=12 * 24,
-    bint debug=True,
+    bint debug=True,                
+    bint limited_mouse_move=True,
+    Py_ssize_t scroll_x_begin_center_offset = 30,
+    Py_ssize_t scroll_y_begin_center_offset = 30,
+    Py_ssize_t scroll_x_end_center_offset = 30,
+    Py_ssize_t scroll_y_end_center_offset = 30,
+    bint add_move_and_tap=True,
 ):
-    """
-    Parses the active screen fragments from an Android device and returns them as a DataFrame.
 
-    Parameters:
-    serial (str): The serial number of the device (default "").
-    adb_path (str): The path to the adb executable (default "").
-    number_of_max_views (int): The number of maximum views to retrieve (default 1).
-    screen_width (int): The width of the screen (default 720).
-    screen_height (int): The height of the screen (default 1280).
-    subproc_shell (bool): Whether to use the shell in the subprocess (default False).
-
-    Returns:
-    pd.DataFrame: The parsed screen fragments as a DataFrame.
-    """
     cdef:
         list dframelist,last_element_list
         Py_ssize_t l1, l2, exax
@@ -1067,7 +1446,7 @@ def parse_fragments_active_screen(
                 if config_settings.debug_enabled:
                     errwrite()
 
-        if add_input_tap:
+        if add_input_tap or add_move_and_tap:
             try:
                 df2.loc[:, "aa_input_tap"] = df2.apply(
                     lambda q: InputTap(
@@ -1087,8 +1466,39 @@ def parse_fragments_active_screen(
                 if config_settings.debug_enabled:
                     errwrite()
 
-        if sendevent_mouse_move_add:
+        if sendevent_mouse_move_add or add_move_and_tap:
             try:
+                if limited_mouse_move:
+
+                    df2.loc[:, "aa_scroll_start_x"] = (
+                        df2.aa_center_x - scroll_x_begin_center_offset
+                    )
+                    df2.loc[:, "aa_scroll_end_x"] = (
+                        df2.aa_center_x + scroll_x_end_center_offset
+                    )
+                    df2.loc[:, "aa_scroll_start_y"] = (
+                        df2.aa_center_y - scroll_y_begin_center_offset
+                    )
+                    df2.loc[:, "aa_scroll_end_y"] = (
+                        df2.aa_center_y + scroll_y_end_center_offset
+                    )
+
+                    mask1 = df2.loc[(df2.aa_center_x - scroll_x_begin_center_offset <= df2.aa_start_x)].index
+                    df2.loc[mask1, "aa_scroll_start_x"] = df2.loc[mask1, "aa_start_x"]
+
+                    mask2= df2.loc[(df2.aa_center_x + scroll_x_end_center_offset >= df2.aa_end_x)].index
+                    df2.loc[mask2, "aa_scroll_end_x"] = df2.loc[mask2, "aa_end_x"]
+
+                    mask3 = df2.loc[(df2.aa_center_y - scroll_y_begin_center_offset <= df2.aa_start_y)].index
+                    df2.loc[mask3, "aa_scroll_start_y"] = df2.loc[mask3, "aa_start_y"]
+
+                    mask4 = df2.loc[(df2.aa_center_y + scroll_y_end_center_offset >= df2.aa_end_y)].index
+                    df2.loc[mask4, "aa_scroll_end_y"] = df2.loc[mask4, "aa_end_y"]                
+                    sendevent_mouse_move_start_x='aa_scroll_start_x'
+                    sendevent_mouse_move_start_y='aa_scroll_start_y'
+                    sendevent_mouse_move_end_x='aa_scroll_end_x'
+                    sendevent_mouse_move_end_y='aa_scroll_end_y'                
+                
                 df2.loc[:, "aa_mouse_move"] = df2.apply(
                     lambda q: SendEventMouseMove(
                         fu=subprocess_input_sendevent,
@@ -1113,6 +1523,13 @@ def parse_fragments_active_screen(
                     ),
                     axis=1,
                 )
+            
+            except Exception:
+                if config_settings.debug_enabled:
+                    errwrite()
+        if add_move_and_tap:
+            try:
+                df2.loc[:,'aa_move_and_tap'] = df2.apply(lambda x:MoveAndTap(x["aa_mouse_move"], x[ "aa_input_tap"]),axis=1)
             except Exception:
                 if config_settings.debug_enabled:
                     errwrite()
@@ -1360,8 +1777,9 @@ def subprocess_input_sendevent(
             adbexecommand = f"{su_exe} -c '{sh_device} {path_on_device_sh}'"
         else:
             adbexecommand = f"{sh_device} {path_on_device_sh}"
+        brline=bresenham_line(int(startx), int(starty), int(endx), int(endy))
         ddscript, binary_data = create_struct_mouse_move_commands(
-            allcoords=bresenham_line(int(startx), int(starty), int(endx), int(endy)),
+            allcoords=brline+list(reversed(brline)),
             y_max=y_max,
             x_max=x_max,
             screen_height=screen_height,
@@ -1842,7 +2260,9 @@ def start_parsing_thread(adb_exe,device_serial,device_shell,uiautomator_cmd,thre
 
 
 cdef: 
-    object categories_regex=re.compile(rb"\L<options>", options=all_categories_eventparser, ignore_unused=True)
+    #object categories_regex=re.compile(rb"\b\L<options>", options=all_categories_eventparser, ignore_unused=True)
+    #object categories_regex=re.compile(b'(?<!\.)\\b(' + b'|'.join(all_categories_eventparser) +b')\\b')
+    object categories_regex=re.compile(b'(?<!\.)\\b(?:A(?:c(?:cessibility(?:DataSensitive|Focused|Tool)|ti(?:on|ve))|ddedCount)|B(?:eforeText|ooleanProperties)|C(?:hecked|lassName|on(?:nectionId|tent(?:ChangeTypes|Description|Invalid))|urrentItemIndex)|E(?:mpty|nabled|ventT(?:ime|ype))|F(?:ocused|romIndex|ullScreen)|ItemCount|Loggable|M(?:axScroll[XY]|ovementGranularity)|Pa(?:ckageName|rcelableData|ssword)|Re(?:cords|movedCount)|S(?:croll(?:Delta[XY]|able|[XY])|ealed|ource(?:(?:DisplayId|NodeId|WindowId))?|peechStateChangeTypes)|T(?:ext|ime(?:Now|Stamp)|oIndex)|Window(?:Change(?:Types|s)|Id)|recordCount)\\b(?=:\\s)')
     list all_categories_eventparser_with_timenow_sorted=sorted(all_categories_eventparser+(b'TimeNow',))
     stringvector fillkeys=[<string>bv for bv in all_categories_eventparser_with_timenow_sorted]
     stringvector dummykeys=[<string>b'' for _ in range(len(fillkeys))]
@@ -2045,6 +2465,13 @@ class EvParse:
         str sendevent_mouse_move_cwd_on_device="/sdcard",
         Py_ssize_t sendevent_mouse_move_qty_blocks=4 * 24,
         bint debug=True,
+        bint limited_mouse_move=True,
+        Py_ssize_t scroll_x_begin_center_offset = 30,
+        Py_ssize_t scroll_y_begin_center_offset = 30,
+        Py_ssize_t scroll_x_end_center_offset = 30,
+        Py_ssize_t scroll_y_end_center_offset = 30,
+        bint add_move_and_tap=True,
+        **kwargs
     ):
 
         self.npdtype = np.dtype(
@@ -2103,6 +2530,13 @@ class EvParse:
         self.sendevent_mouse_move_cwd_on_device = sendevent_mouse_move_cwd_on_device
         self.sendevent_mouse_move_qty_blocks = sendevent_mouse_move_qty_blocks
         self.debug = debug
+        self.limited_mouse_move=limited_mouse_move
+        self.scroll_x_begin_center_offset =scroll_x_begin_center_offset 
+        self.scroll_y_begin_center_offset =scroll_y_begin_center_offset 
+        self.scroll_x_end_center_offset =scroll_x_end_center_offset 
+        self.scroll_y_end_center_offset =scroll_y_end_center_offset 
+        self.add_move_and_tap=add_move_and_tap
+        self.kwargs=kwargs
 
     def callback_function(self, **kwargs):
         cdef:
@@ -2222,6 +2656,12 @@ class EvParse:
         sendevent_mouse_move_cwd_on_device=None,
         sendevent_mouse_move_qty_blocks=None,
         debug=None,
+        limited_mouse_move=None,
+        scroll_x_begin_center_offset =None,
+        scroll_y_begin_center_offset =None,
+        scroll_x_end_center_offset =None,
+        scroll_y_end_center_offset =None,
+        add_move_and_tap=None,
         **kwargs,
     ):
         if not screen_width:
@@ -2272,7 +2712,20 @@ class EvParse:
             sendevent_mouse_move_qty_blocks = self.sendevent_mouse_move_qty_blocks
         if not debug:
             debug = self.debug
-        return parse_fragments_active_screen(
+        if not limited_mouse_move:
+            limited_mouse_move = self.limited_mouse_move
+        if not scroll_x_begin_center_offset :
+            scroll_x_begin_center_offset  = self.scroll_x_begin_center_offset 
+        if not scroll_y_begin_center_offset :
+            scroll_y_begin_center_offset  = self.scroll_y_begin_center_offset 
+        if not scroll_x_end_center_offset :
+            scroll_x_end_center_offset  = self.scroll_x_end_center_offset 
+        if not scroll_y_end_center_offset :
+            scroll_y_end_center_offset  = self.scroll_y_end_center_offset 
+        if not add_move_and_tap:
+            add_move_and_tap = self.add_move_and_tap
+
+        dfx=parse_fragments_active_screen(
             serial=self.device_serial,
             adb_path=self.adb_exe,
             number_of_max_views=1,
@@ -2300,5 +2753,31 @@ class EvParse:
             sendevent_mouse_move_cwd_on_device=sendevent_mouse_move_cwd_on_device,
             sendevent_mouse_move_qty_blocks=sendevent_mouse_move_qty_blocks,
             debug=debug,
+            limited_mouse_move=limited_mouse_move,
+            scroll_x_begin_center_offset =scroll_x_begin_center_offset ,
+            scroll_y_begin_center_offset =scroll_y_begin_center_offset ,
+            scroll_x_end_center_offset =scroll_x_end_center_offset ,
+            scroll_y_end_center_offset =scroll_y_end_center_offset ,
+            add_move_and_tap=add_move_and_tap,
         )
+        if kwargs.get('with_windows',False):
+            dfx.loc[:, meta_name_column] = dfx.aa_mid.apply(_convert_to_int)
+            try:
+                dfx = parse_window_elements(
+                    dfx=dfx,
+                    device_serial=self.device_serial,
+                    adbexe=self.adb_exe,
+                    dump_cmd="cmd window dump-visible-window-views",
+                )
+            except Exception:
+                if config_settings.debug_enabled:
+                        errwrite()
+        return dfx
+
+
+def _convert_to_int(x):
+    try:
+        return int(x, 16)
+    except Exception:
+        return pd.NA
 

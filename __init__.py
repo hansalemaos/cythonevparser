@@ -1,7 +1,8 @@
 import os
 
 try:
-    import evparse
+    #import evparse
+    from .evparse import *  
 
 except Exception as e:
     import Cython, setuptools, platform, subprocess, os, sys, time, regex, exceptdrucker,numpy,adbshellexecuter,cythoncubicspline,flatten_any_dict_iterable_or_whatsoever,nested2nested,parifinder,pandas
@@ -29,7 +30,7 @@ except Exception as e:
         else None,
     )
     if not iswindows:
-        time.sleep(300)
-    import evparse
+        time.sleep(180)
+    from .evparse import *  
 
     os.chdir(olddict)
